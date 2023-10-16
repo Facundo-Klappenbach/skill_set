@@ -1,0 +1,73 @@
+use mgmtmsa402;
+
+SELECT
+    min(report_month) as earliest_record #2006-01-01
+    ,max(report_month) as latest_record #2023-08-01
+FROM lax_pax;
+
+SELECT
+    count(1) as num_rows
+FROM (SELECT terminal
+           , movement
+           , flight
+      FROM lax_pax
+      GROUP BY terminal, movement, flight
+      ORDER BY terminal, movement, flight) as t1;
+
+SELECT
+    terminal
+    ,movement
+    ,sum(throughput) as total_pax
+FROM lax_pax
+GROUP BY terminal, movement
+ORDER BY terminal, movement;
+
+SELECT
+    terminal
+    ,sum(throughput) as total_pax
+FROM lax_pax
+GROUP BY terminal
+ORDER BY terminal;
+
+SELECT
+    terminal
+    ,sum(throughput) as total_pax
+FROM lax_pax
+GROUP BY terminal
+ORDER BY total_pax DESC
+LIMIT 1;
+
+SELECT
+    lp.terminal
+    ,year(report_month) as year
+    ,avg(throughput) as average
+FROM lax_pax as lp
+INNER JOIN (
+        SELECT
+           terminal
+        FROM(
+            SELECT
+                terminal
+                ,sum(throughput) as total_pax
+            FROM lax_pax
+            WHERE movement = 'Departure'
+            GROUP BY terminal
+            ORDER BY total_pax desc
+            ) AS total_year
+        WHERE total_pax > 1000000
+)  as tf on tf.terminal = lp.terminal
+WHERE movement = 'Departure'
+GROUP BY lp.terminal, year
+ORDER BY lp.terminal, year, average desc;
+
+SELECT
+    lp.terminal
+    ,year(report_month) as year
+    ,avg(throughput) as average
+FROM lax_pax as lp
+WHERE movement = 'Arrival'
+AND terminal = 'TBIT'
+AND (report_month BETWEEN DATE('2016-01-01') AND DATE('2020-02-01-')
+         OR report_month >= DATE('2021-10-01'))
+GROUP BY lp.terminal, year
+ORDER BY lp.terminal, year, average desc;
