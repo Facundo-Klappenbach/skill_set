@@ -1,0 +1,379 @@
+USE mgmtmsa402;
+SELECT
+   st.id as trip_id
+   ,ceiling(timestampdiff(SECOND, st.date, et.date)/60) as trip_length
+FROM sf_trip_start st
+LEFT JOIN sf_trip_end et
+   ON et.id = st.id
+ORDER BY st.id asc ;
+
+SELECT
+    COUNT(DISTINCT st.id) as stolen_bikes
+FROM sf_trip_start st
+LEFT JOIN sf_trip_end et
+    ON et.id = st.id
+WHERE et.date IS NULL ;
+
+SELECT
+    st.id as trip_id
+    ,CASE WHEN et.id is not null then ceiling(timestampdiff(SECOND, st.date, et.date)/60)*0.3 + 3.49
+            WHEN et.id is null then 1000 END as trip_charge
+FROM sf_trip_start st
+LEFT JOIN sf_trip_end et
+    ON et.id = st.id
+ORDER BY st.id asc ;
+
+SELECT
+    st.id as trip_id
+    ,CASE WHEN et.id is not null and su.user_type = 'Customer' then ceiling(timestampdiff(SECOND, st.date, et.date)/60)*0.3 + 3.49
+            WHEN et.id is not null and su.user_type = 'Subscriber' then ceiling(timestampdiff(SECOND, st.date, et.date)/60)*0.2
+                WHEN et.id is null then 1000 END as trip_charge
+FROM sf_trip_start st
+LEFT JOIN sf_trip_end et
+    ON et.id = st.id
+LEFT JOIN sf_user su
+    ON st.id = su.trip_id
+ORDER BY st.id asc;
+
+
+
+
+
+select
+    type
+    ,round((distinct_flights_per_type / sum(distinct_flights_per_type))*100 , 2)
+from(
+    select
+        type
+        ,COUNT(type) as distinct_flights_per_type
+    FROM (
+        SELECT
+        swa.type
+        ,origin
+        ,dest
+        FROM sw_flight swf
+        LEFT JOIN sw_aircraft swa
+            ON swa.tail = swf.tail
+        GROUP BY swa.type, origin, dest
+        ORDER BY swa.type
+        ) t1
+    GROUP BY type
+) as t2
+GROUP BY type;
+
+SELECT
+  swa.type
+   , ROUND((count(distinct concat(origin,dest))  / max(total_distinct_flights))*100,2) as percentage
+FROM sw_flight swf
+LEFT JOIN sw_aircraft swa
+    ON swa.tail = swf.tail
+JOIN ( -- total distinct flight total
+  select count(distinct concat(origin,dest)) as total_distinct_flights
+  FROM sw_flight swf
+) total_distinct_flights
+GROUP BY swa.type
+ORDER BY swa.type;
+
+
+
+SELECT
+           concat(origin,dest)
+      FROM sw_flight swf
+      GROUP BY 1
+      ORDER BY 1;
+
+
+
+SELECT
+    flight_num
+FROM sw_flight swf
+WHERE swf.flight_num NOT IN (
+        SELECT flight_num
+        FROM sw_flight as swf
+        INNER JOIN sw_airtran_aircraft swaa
+            ON swf.tail = swaa.tail
+    )
+GROUP BY flight_num
+ORDER BY flight_num;
+
+SELECT
+    flight_num
+FROM sw_flight swf
+WHERE NOT EXISTS (
+        SELECT 1
+        FROM sw_flight sw
+        INNER JOIN sw_airtran_aircraft swaa
+            ON sw.tail = swaa.tail
+        WHERE swf.flight_num = sw.flight_num
+    )
+GROUP BY flight_num
+ORDER BY flight_num;
+
+SELECT
+    flight_num
+FROM sw_flight swf
+LEFT JOIN sw_airtran_aircraft swaa
+    ON swf.tail = swaa.tail
+WHERE swaa.tail is null
+EXCEPT
+SELECT
+flight_num
+FROM sw_flight as swf
+LEFT JOIN sw_airtran_aircraft swaa
+    ON swf.tail = swaa.tail
+where swaa.tail is not null;
+
+
+SELECT DISTINCT
+ flight_num
+FROM sw_flight L
+LEFT OUTER JOIN sw_airtran_aircraft R
+ON L.tail = R.tail
+WHERE R.tail IS NULL;
+
+
+SELECT
+    flight_num
+FROM sw_flight swf
+LEFT JOIN sw_airtran_aircraft swaa
+    ON swaa.tail = swf.tail
+group by flight_num
+having sum((case when swaa.tail is not null and swf.tail is not null then 1 else 0 end)) = 0
+order by 1;
+
+
+SELECT DISTINCT
+ flight_num
+FROM sw_flight L
+WHERE NOT EXISTS (
+    SELECT 1 -- just a convention
+    FROM airtran_aircraft R
+    INNER JOIN sw_airtran_aircraft swaa
+            ON L.tail = R.tail
+    WHERE L.tail = R.tail);
+
+
+SELECT
+    flight_num
+    ,swf.tail
+    ,swaa.tail
+FROM sw_flight swf
+LEFT JOIN sw_airtran_aircraft swaa
+    ON swaa.tail = swf.tail
+order by flight_num;
+
+WITH
+first_fligth as (
+    SELECT date
+      , origin
+      , dest
+      , flight_num
+      , departure
+      , arrival
+      , timestamp(date,departure) as departur_time_lax
+      , case when timediff(arrival, departure)< 0 then timestamp(date+1,arrival)
+               else timestamp(date,arrival) end as arrival_timestamp_layover
+    from sw_flight sw
+    where origin = 'LAX'
+    and dest <> 'SEA'
+    and date = '2023-10-18'
+)
+,second_fligth as (
+    SELECT date
+      , origin
+      , dest
+      , flight_num
+      , departure
+      , arrival
+      , timestamp(date, departure) as departure_timestamp
+      , timestamp(date, arrival) as arrival_timestamp
+    from sw_flight sw
+    where origin <> 'LAX'
+    and dest = 'SEA'
+    and date between '2023-10-18' and '2023-10-19'
+)
+select
+    ff.origin as origin
+    ,ff.dest as layover
+    ,sf.dest as dest
+    ,ff.flight_num as first_flight
+    ,sf.flight_num as second_flight
+    ,departur_time_lax as departure_from_lax
+    ,arrival_timestamp as arrival_in_sea
+from first_fligth ff
+cross join second_fligth sf
+    on ff.dest = sf.origin
+    and timestampdiff(minute, arrival_timestamp_layover, departure_timestamp)/60 between 1 and 3;
+
+
+
+WITH
+flights as (
+    SELECT date
+      , origin
+      , dest
+      , flight_num
+      , departure
+      , arrival
+      , tail
+      , timestamp(date,departure) as departur_timestamp
+-- I create this case when to consider the borderline cases. (the ones that departures, for example, at 23hs from
+-- LAX and arrives to the layover the other day
+      , case when timediff(arrival, departure)< 0 then timestamp(date+1,arrival)
+               else timestamp(date,arrival) end as arrival_timestamp
+    from sw_flight sw
+    where date between '2023-10-18' and '2023-10-19'
+)
+select
+    ff.origin as origin
+    ,ff.dest as layover
+    ,sf.dest as dest
+    ,ff.flight_num as first_flight
+    ,sf.flight_num as second_flight
+    ,ff.departur_timestamp as departure_from_lax
+    ,sf.arrival_timestamp as arrival_in_sea
+from flights ff -- first flight from LAX
+left join flights sf -- second flight from layover
+    on ff.dest = sf.origin
+    and timestampdiff(minute, ff.arrival_timestamp, sf.departur_timestamp)/60 between 1 and 3
+where ff.date = '2023-10-18'
+and ff.origin = 'LAX'
+and sf.dest = 'SEA'
+order by ff.departur_timestamp asc;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+SELECT date
+      , origin
+      , dest
+      , flight_num
+      , departure
+      , arrival
+      , timestamp(date,departure) as departur_time_lax
+      , case when timediff(arrival, departure)< 0 then timestamp(date+1,arrival)
+               else timestamp(date,arrival) end as arrival_timestamp
+    from sw_flight sw
+    where origin = 'LAX'
+    and dest <> 'SEA'
+    and date = '2023-10-18'
+    and sw.flight_num = 'WN1872';
+
+SELECT
+    date
+    ,tail
+    ,dest
+from (SELECT date
+           , origin
+           , dest
+           , flight_num
+           , departure
+           , arrival
+           , tail
+           , ROW_NUMBER() over (partition by tail, date
+        order by timestamp(date, departure)) AS flight_of_day
+           , timestamp(date, departure)      as departur_time_lax
+      from sw_flight sw
+      order by tail, departur_time_lax) as t1
+where flight_of_day = 4;
+
+WITH RECURSIVE cte (num_flights,date,dest,tail,origin) as (
+    select 1,
+           date,
+           dest,
+           tail,
+           origin
+    from sw_flight r
+    union all
+    select
+        num_flights + 1 as num_flights
+        ,l.date
+        ,l.dest
+        ,l.tail
+        ,l.origin
+    from cte l
+    join cte r
+        on l.tail = r.tail
+        and r.date = l.date
+        and l.origin = r.dest
+    where num_flights <= 4
+)
+select num_flights, dest, tail
+from cte
+where num_flights = 4;
+
+WITH RECURSIVE cte AS (
+    SELECT
+        1 as hops
+        , user_id
+        , friend_user_id
+    FROM friends
+
+    UNION ALL
+
+    SELECT
+        hops + 1 AS hops,
+        L.user_id,
+        R.friend_user_id
+FROM friends L
+JOIN cte R
+ON L.friend_user_id = R.user_id
+WHERE R.friend_user_id <> L.user_id AND
+(L.user_id, R.friend_user_id) NOT IN ( SELECT * FROM friends) AND
+hops <= 2
+)
+SELECT DISTINCT user_id, friend_user_id FROM cte WHERE hops = 3;
+
+
+WITH RECURSIVE AircraftFlights AS (
+  SELECT
+    tail,
+    flight_num,
+    origin,
+    dest,
+    1 AS flight_count
+  FROM
+    sw_flight fs
+
+  UNION ALL
+
+  SELECT
+    fs.tail,
+    fs.flight_num,
+    fs.origin,
+    fs.dest,
+    af.flight_count + 1
+  FROM
+    sw_flight fs
+  JOIN
+    AircraftFlights af
+  ON
+    fs.tail = af.tail
+  WHERE
+    af.flight_count < 4
+)
+SELECT
+  tail,
+  MAX(dest) AS location_after_4th_flight
+FROM
+  AircraftFlights
+WHERE
+  flight_count = 4
+GROUP BY
+  tail
+HAVING
+  COUNT(*) = 4;
